@@ -12,3 +12,5 @@ venv/
 storage/uploads/*
 !storage/uploads/.gitkeep
 
+# Local implementation plans and design notes
+docs/superpowers/
