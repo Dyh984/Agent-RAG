@@ -1,0 +1,915 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AGENTIC RAG · 智能知识决策系统</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Vue 3 CDN -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+    body {
+      font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+    ::-webkit-scrollbar { width: 5px; height: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+  </style>
+</head>
+<body class="bg-[#f6f8fa] text-slate-800 antialiased h-screen flex flex-col font-sans overflow-hidden">
+  <div id="app" class="flex flex-col h-full overflow-hidden text-base">
+
+    <!-- 全局轻量 Toast 提示 -->
+    <transition enter-active-class="transform ease-out duration-300 transition" enter-from-class="-translate-y-4 opacity-0" enter-to-class="translate-y-0 opacity-100" leave-active-class="transition ease-in duration-200" leave-from-class="opacity-100" leave-to-class="opacity-0">
+      <div v-if="toastMessage" class="fixed top-6 right-8 z-50 flex items-center gap-3 bg-slate-900/95 text-white px-5 py-3 rounded-2xl shadow-2xl text-sm backdrop-blur-md border border-slate-700/60">
+        <i data-lucide="check-circle" class="w-5 h-5 text-emerald-400"></i>
+        <span class="font-medium tracking-wide">{{ toastMessage }}</span>
+      </div>
+    </transition>
+
+    <!-- 1. 顶部全局导航栏（精简为双模块导航） -->
+    <header class="h-16 bg-white/90 backdrop-blur-md border-b border-slate-200/80 px-8 flex items-center justify-between shrink-0 shadow-xs z-20">
+      <div class="flex items-center space-x-3.5">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center text-white shadow-md shadow-teal-500/20">
+          <i data-lucide="bot" class="w-5 h-5"></i>
+        </div>
+        <div class="flex items-center gap-2.5">
+          <h1 class="font-bold text-slate-900 text-lg tracking-tight">AGENTIC RAG</h1>
+          <span class="text-xs px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium border border-slate-200">问答演示 · RAG 待接入</span>
+        </div>
+      </div>
+
+      <!-- 导航选项卡：已移除“检索评测” -->
+      <nav class="flex items-center bg-slate-100/90 p-1.5 rounded-xl border border-slate-200/60 space-x-1">
+        <button
+          @click="currentTab = 'chat'"
+          :class="currentTab === 'chat' ? 'bg-white text-slate-900 font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900 font-medium'"
+          class="px-5 py-2 rounded-lg text-sm flex items-center gap-2 transition-all">
+          <i data-lucide="message-square" class="w-4 h-4 text-teal-600"></i> 智能问答
+        </button>
+        <button
+          @click="currentTab = 'kb'"
+          :class="currentTab === 'kb' ? 'bg-white text-slate-900 font-bold shadow-xs' : 'text-slate-600 hover:text-slate-900 font-medium'"
+          class="px-5 py-2 rounded-lg text-sm flex items-center gap-2 transition-all">
+          <i data-lucide="folder-git-2" class="w-4 h-4 text-teal-600"></i> 知识库管理
+        </button>
+      </nav>
+
+      <!-- Agent 就绪状态 -->
+      <div class="flex items-center space-x-2">
+        <div
+          :class="backendReady ? 'bg-emerald-50 border-emerald-200/80 text-emerald-700' : 'bg-rose-50 border-rose-200/80 text-rose-700'"
+          class="flex items-center gap-2 px-3.5 py-1.5 rounded-full border text-xs font-semibold">
+          <span :class="backendReady ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'" class="w-2 h-2 rounded-full"></span>
+          <span>{{ backendReady ? '后端与数据库已就绪' : '后端连接异常' }}</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- 2. 主内容区 -->
+    <main class="flex-1 flex overflow-hidden">
+
+      <!-- ================= 模块一：智能问答 ================= -->
+      <section v-if="currentTab === 'chat'" class="flex-1 flex w-full h-full overflow-hidden">
+
+        <!-- 对话侧边栏 -->
+        <aside class="w-72 bg-white/80 backdrop-blur-sm border-r border-slate-200/80 flex flex-col shrink-0">
+          <div class="p-4 border-b border-slate-100 flex items-center justify-between">
+            <span class="text-xs font-bold text-slate-400 uppercase tracking-wider">历史会话</span>
+            <button @click="createNewSession" class="text-xs flex items-center gap-1.5 bg-teal-50 hover:bg-teal-100 text-teal-700 px-3 py-1.5 rounded-lg border border-teal-200/70 font-semibold transition shadow-2xs">
+              <i data-lucide="plus" class="w-3.5 h-3.5"></i> 新建对话
+            </button>
+          </div>
+
+          <div class="flex-1 overflow-y-auto p-3 space-y-1.5">
+            <div
+              v-for="session in sessions"
+              :key="session.id"
+              @click="activeSessionId = session.id"
+              :class="activeSessionId === session.id ? 'bg-teal-50/90 text-teal-950 border-teal-200 font-semibold shadow-xs' : 'hover:bg-slate-50 text-slate-600 border-transparent'"
+              class="group p-3 rounded-xl border text-left cursor-pointer transition flex items-center justify-between relative">
+              <div class="flex items-center gap-3 overflow-hidden flex-1">
+                <i data-lucide="message-circle" class="w-4.5 h-4.5 shrink-0 text-slate-400 group-hover:text-teal-600"></i>
+                <div class="overflow-hidden flex-1">
+                  <p class="text-sm truncate leading-snug">{{ session.title }}</p>
+                  <span class="text-xs text-slate-400 font-normal mt-0.5 block">{{ session.time }}</span>
+                </div>
+              </div>
+              <button
+                @click.stop="confirmDeleteSession(session)"
+                title="删除对话"
+                class="opacity-0 group-hover:opacity-100 p-1.5 hover:text-rose-600 text-slate-400 hover:bg-rose-50 rounded-lg transition">
+                <i data-lucide="trash-2" class="w-4 h-4"></i>
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <!-- 聊天主视窗 -->
+        <div class="flex-1 flex flex-col bg-[#fafbfc] overflow-hidden relative">
+
+          <!-- 顶部状态栏 -->
+          <div class="h-14 border-b border-slate-200/70 bg-white/70 backdrop-blur-md px-8 flex items-center justify-between shrink-0">
+            <div class="flex items-center space-x-3">
+              <span class="font-bold text-slate-900 text-base tracking-tight truncate max-w-lg">{{ currentSession.title }}</span>
+              <span class="text-xs text-slate-400 bg-slate-100 px-2.5 py-0.5 rounded-full font-medium">{{ currentSession.messages.length }} 条交互</span>
+            </div>
+
+            <button
+              @click="showTraceModal = true"
+              class="text-xs px-3.5 py-1.5 rounded-lg border border-slate-200 hover:border-slate-300 hover:bg-white text-slate-700 flex items-center gap-2 transition shadow-2xs font-medium">
+              <i data-lucide="git-branch" class="w-4 h-4 text-teal-600"></i> 决策执行追踪
+            </button>
+          </div>
+
+          <!-- 消息流动展示区 -->
+          <div class="flex-1 overflow-y-auto p-8 space-y-7" ref="msgContainer">
+            <div v-for="(msg, index) in currentSession.messages" :key="index" class="flex flex-col">
+
+              <!-- 用户消息 -->
+              <div v-if="msg.role === 'user'" class="flex justify-end gap-3.5 items-start">
+                <div class="max-w-[70%] space-y-2.5">
+                  <div v-if="msg.image" class="rounded-2xl overflow-hidden border border-slate-200 shadow-sm max-w-sm ml-auto">
+                    <img :src="msg.image" class="object-cover max-h-56 w-full" alt="用户上传图片" />
+                  </div>
+                  <div class="bg-gradient-to-r from-teal-600 to-emerald-600 text-white p-4 rounded-2xl rounded-tr-xs text-base leading-relaxed shadow-sm shadow-teal-700/10 whitespace-pre-wrap">
+                    {{ msg.content }}
+                  </div>
+                </div>
+                <div class="w-9 h-9 rounded-xl bg-slate-200 flex items-center justify-center shrink-0 text-slate-700 text-xs font-bold shadow-2xs">
+                  ME
+                </div>
+              </div>
+
+              <!-- Agent 问答消息 -->
+              <div v-else class="flex gap-4 items-start max-w-[85%]">
+                <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-700 to-emerald-800 text-white flex items-center justify-center shrink-0 shadow-sm">
+                  <i data-lucide="bot" class="w-5 h-5"></i>
+                </div>
+                <div class="space-y-3.5 flex-1">
+
+                  <!-- 思考链折叠器 -->
+                  <div v-if="msg.thoughts" class="border border-slate-200 rounded-xl bg-white overflow-hidden text-xs shadow-2xs">
+                    <button
+                      @click="msg.expandThought = !msg.expandThought"
+                      class="w-full px-4 py-2.5 bg-slate-50/70 hover:bg-slate-100/70 flex items-center justify-between text-slate-700 transition">
+                      <span class="flex items-center gap-2 font-semibold">
+                        <i data-lucide="cpu" class="w-4 h-4 text-teal-600"></i> Agent 思考决策链 ({{ msg.thoughts.length }} 步自主处理)
+                      </span>
+                      <i :data-lucide="msg.expandThought ? 'chevron-up' : 'chevron-down'" class="w-4 h-4 text-slate-400"></i>
+                    </button>
+                    <div v-if="msg.expandThought" class="p-4 border-t border-slate-100 text-slate-600 font-mono space-y-2 bg-slate-50/30 text-xs leading-relaxed">
+                      <p v-for="(thought, idx) in msg.thoughts" :key="idx" class="flex items-start gap-2">
+                        <span class="text-teal-600 font-bold">›</span> {{ thought }}
+                      </p>
+                    </div>
+                  </div>
+
+                  <!-- 回答正文 -->
+                  <div class="bg-white border border-slate-200/90 p-5 rounded-2xl rounded-tl-xs text-base leading-relaxed text-slate-800 shadow-xs whitespace-pre-wrap">
+                    {{ msg.content }}
+                  </div>
+
+                  <!-- 智能溯源依据 (可点击查看原文切片) -->
+                  <div v-if="msg.sources && msg.sources.length" class="flex flex-wrap gap-2.5 pt-1">
+                    <div
+                      v-for="(source, sIdx) in msg.sources" :key="sIdx"
+                      @click="openSourceDetail(source)"
+                      title="点击查看引用原文切片"
+                      class="group/src inline-flex items-center gap-2 px-3.5 py-1.5 bg-white hover:bg-teal-50/90 border border-teal-200/80 hover:border-teal-400 rounded-xl text-xs text-teal-900 shadow-2xs cursor-pointer transition">
+                      <i data-lucide="file-check" class="w-4 h-4 text-teal-600"></i>
+                      <span class="font-bold text-slate-700">[{{ source.kbName }}]</span>
+                      <span class="group-hover/src:text-teal-700 underline-offset-4 group-hover/src:underline">《{{ source.title }}》{{ source.chapter }}</span>
+                      <span class="text-teal-700 font-mono text-xs bg-teal-50 px-1.5 py-0.5 rounded-md border border-teal-100 font-semibold">P.{{ source.page }}</span>
+                      <i data-lucide="external-link" class="w-3.5 h-3.5 text-slate-300 group-hover/src:text-teal-600 ml-0.5 transition"></i>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+
+          <!-- 底部输入交互区 -->
+          <div class="p-6 bg-white border-t border-slate-200/80 shrink-0 space-y-3">
+
+            <!-- FAQs 快捷提问栏 -->
+            <div class="flex items-center gap-2.5 overflow-x-auto pb-0.5 text-xs">
+              <span class="text-slate-400 font-medium shrink-0 flex items-center gap-1.5">
+                <i data-lucide="sparkles" class="w-4 h-4 text-teal-600"></i> 文档识别提问:
+              </span>
+              <button
+                v-for="(tag, idx) in allDynamicQuestions"
+                :key="idx"
+                @click="userInput = tag"
+                class="px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-teal-50 hover:text-teal-800 text-slate-700 border border-transparent hover:border-teal-200/70 shrink-0 transition flex items-center gap-1 shadow-2xs text-xs font-medium">
+                <span>{{ tag }}</span>
+              </button>
+            </div>
+
+            <!-- 图片上传待发预览卡片 -->
+            <div v-if="selectedImage" class="flex items-center gap-3 bg-slate-50 p-2 rounded-xl border border-slate-200 max-w-sm">
+              <img :src="selectedImage" class="w-8 h-8 object-cover rounded-lg border border-slate-200" />
+              <span class="text-xs text-slate-600 flex-1 truncate font-medium">已添加附加图像</span>
+              <button @click="selectedImage = null" class="text-slate-400 hover:text-rose-500 p-1">
+                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+
+            <!-- 组合多模态输入栏：单行水平对齐 -->
+            <div class="flex items-center gap-2 border border-slate-300 rounded-2xl px-2.5 py-1.5 focus-within:border-teal-600 focus-within:ring-2 focus-within:ring-teal-100 bg-white transition shadow-2xs">
+              <input type="file" ref="fileInput" accept="image/*" class="hidden" @change="handleImageUpload" />
+              <button
+                @click="$refs.fileInput.click()"
+                title="上传附加图片"
+                class="w-9 h-9 flex items-center justify-center text-slate-400 hover:text-teal-600 rounded-xl hover:bg-slate-50 transition shrink-0">
+                <i data-lucide="image" class="w-5 h-5"></i>
+              </button>
+
+              <textarea
+                v-model="userInput"
+                @keydown.enter.exact.prevent="sendMessage"
+                rows="1"
+                placeholder="在此输入您的问题，Enter 发送；按 Shift + Enter 换行..."
+                class="flex-1 resize-none border-0 py-2 px-1 text-sm outline-none placeholder-slate-400 bg-transparent leading-normal max-h-32 overflow-y-auto"></textarea>
+
+              <button
+                @click="sendMessage"
+                :disabled="!userInput.trim() && !selectedImage"
+                title="发送问题"
+                class="w-9 h-9 flex items-center justify-center rounded-xl bg-teal-600 hover:bg-teal-700 disabled:bg-slate-200 disabled:cursor-not-allowed text-white transition shrink-0 shadow-xs">
+                <i data-lucide="send" class="w-4 h-4"></i>
+              </button>
+            </div>
+
+            <div class="flex justify-between items-center text-xs text-slate-400 px-1">
+              <span>系统已配置混合检索与跨库 Agent 决策模型</span>
+              <span>支持 .PDF, .DOCX, .TXT, .MD 及其图片解析</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= 模块二：知识库管理 ================= -->
+      <section v-else-if="currentTab === 'kb'" class="flex-1 flex w-full h-full bg-white overflow-hidden">
+
+        <!-- 知识库侧边列表 -->
+        <aside class="w-80 border-r border-slate-200/80 flex flex-col shrink-0 bg-slate-50/50">
+          <div class="p-5 border-b border-slate-200/70 flex justify-between items-center">
+            <h2 class="text-xs font-bold text-slate-500 uppercase tracking-wider">知识库列表</h2>
+            <button @click="showAddKbModal = true" class="text-xs bg-teal-600 hover:bg-teal-700 text-white px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition shadow-xs font-semibold">
+              <i data-lucide="folder-plus" class="w-4 h-4"></i> 新建库
+            </button>
+          </div>
+
+          <div class="p-3.5 space-y-2.5 overflow-y-auto flex-1">
+            <div
+              v-for="kb in knowledgeBases"
+              :key="kb.id"
+              @click="activeKbId = kb.id"
+              :class="activeKbId === kb.id ? 'bg-white border-teal-500 shadow-sm ring-1 ring-teal-500/20' : 'hover:bg-slate-100/70 border-slate-200/80'"
+              class="group p-4 rounded-2xl border cursor-pointer transition relative">
+
+              <div class="flex items-center justify-between mb-1.5">
+                <span class="font-bold text-base text-slate-900 truncate">{{ kb.name }}</span>
+                <span class="text-xs px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 font-mono">{{ kb.docs.length }} 篇</span>
+              </div>
+              <p class="text-xs text-slate-400 truncate mb-3">{{ kb.description }}</p>
+
+              <div class="flex items-center justify-between pt-2 border-t border-slate-100">
+                <span class="text-xs text-teal-600 flex items-center gap-1.5 font-mono font-medium">
+                  <i data-lucide="layers" class="w-3.5 h-3.5"></i> {{ kb.totalChunks }} 个切片
+                </span>
+
+                <button
+                  @click.stop="confirmDeleteKb(kb)"
+                  title="删除该知识库"
+                  class="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-rose-600 p-1.5 hover:bg-rose-50 rounded-lg transition">
+                  <i data-lucide="trash-2" class="w-4 h-4"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- 知识库内容详情主视图 -->
+        <div class="flex-1 flex flex-col p-8 lg:p-9 overflow-y-auto bg-[#fafbfc]">
+
+          <!-- 顶部标题与操作按钮栏 -->
+          <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-7">
+            <div>
+              <div class="flex items-center gap-3">
+                <h2 class="text-3xl font-extrabold text-slate-900 tracking-tight">{{ currentKb.name }}</h2>
+                <span class="text-xs px-2.5 py-1 rounded-md bg-teal-50 text-teal-700 border border-teal-200/80 font-mono font-semibold">{{ currentKb.id ? `kb_${currentKb.id.slice(0, 8)}` : '未创建' }}</span>
+              </div>
+              <p class="text-sm text-slate-400 mt-2 max-w-2xl leading-relaxed">{{ currentKb.description }}</p>
+            </div>
+
+            <div class="flex items-center gap-3 shrink-0">
+              <!-- 删除本库 -->
+              <button
+                @click="confirmDeleteKb(currentKb)"
+                class="h-11 px-5 border border-slate-200/90 hover:border-rose-300 hover:bg-rose-50/80 text-slate-700 hover:text-rose-600 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition whitespace-nowrap shadow-2xs">
+                <i data-lucide="trash-2" class="w-4.5 h-4.5"></i>
+                <span>删除本库</span>
+              </button>
+
+              <!-- 上传并切片新文档 -->
+              <input type="file" ref="docInput" multiple accept=".pdf,application/pdf" class="hidden" @change="handleDocUpload" />
+              <button
+                @click="$refs.docInput.click()"
+                class="h-11 px-5 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-sm font-semibold flex items-center justify-center gap-2 shadow-sm shadow-teal-700/20 transition whitespace-nowrap">
+                <i data-lucide="upload-cloud" class="w-4.5 h-4.5"></i>
+                <span>上传 PDF 并切片</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- 概览指标卡片 -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-7">
+            <div class="bg-white border border-slate-200/80 rounded-2xl p-6 flex items-center gap-5 shadow-2xs">
+              <div class="w-14 h-14 rounded-2xl bg-teal-50 text-teal-600 flex items-center justify-center shrink-0 shadow-xs">
+                <i data-lucide="file-check-2" class="w-7 h-7"></i>
+              </div>
+              <div class="flex-1 overflow-hidden">
+                <p class="text-base font-bold text-slate-600 tracking-tight">已就绪文档</p>
+                <div class="text-2xl font-extrabold text-slate-900 mt-0.5 flex items-baseline gap-1.5 font-mono">
+                  <span>{{ currentKb.docs.filter(doc => doc.status === 'completed').length }}</span>
+                  <span class="text-sm font-semibold text-slate-500 font-sans">篇</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-white border border-slate-200/80 rounded-2xl p-6 flex items-center gap-5 shadow-2xs">
+              <div class="w-14 h-14 rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 shadow-xs">
+                <i data-lucide="puzzle" class="w-7 h-7"></i>
+              </div>
+              <div class="flex-1 overflow-hidden">
+                <p class="text-base font-bold text-slate-600 tracking-tight">切片总数 (Total Chunks)</p>
+                <div class="text-2xl font-extrabold text-slate-900 mt-0.5 flex items-baseline gap-1.5 font-mono">
+                  <span>{{ currentKb.totalChunks }}</span>
+                  <span class="text-sm font-semibold text-slate-500 font-sans">个</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="bg-white border border-slate-200/80 rounded-2xl p-6 flex items-center gap-5 shadow-2xs">
+              <div class="w-14 h-14 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 shadow-xs">
+                <i data-lucide="brain-circuit" class="w-7 h-7"></i>
+              </div>
+              <div class="flex-1 overflow-hidden">
+                <p class="text-base font-bold text-slate-600 tracking-tight">AI 提取推荐提问</p>
+                <div class="text-2xl font-extrabold text-slate-900 mt-0.5 flex items-baseline gap-1.5 font-mono">
+                  <span>{{ currentKb.suggestedQuestions.length }}</span>
+                  <span class="text-sm font-semibold text-slate-500 font-sans">条识别</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 该库自动提取的代表性提问展示 -->
+          <div class="mb-7 p-5 rounded-2xl border border-teal-100/90 bg-teal-50/50">
+            <div class="flex items-center justify-between mb-3">
+              <span class="text-sm font-bold text-slate-800 flex items-center gap-2">
+                <i data-lucide="sparkles" class="w-4 h-4 text-teal-600"></i> 本库已识别的代表性问题 (自动聚合到全局问答端):
+              </span>
+              <span class="text-xs text-teal-600 font-medium">推荐问题将在后续 RAG 阶段接入</span>
+            </div>
+            <div class="flex flex-wrap gap-2.5">
+              <span
+                v-for="(q, idx) in currentKb.suggestedQuestions"
+                :key="idx"
+                class="px-3.5 py-1.5 bg-white border border-teal-200/80 text-teal-900 text-xs rounded-xl shadow-2xs font-medium">
+                {{ q }}
+              </span>
+            </div>
+          </div>
+
+          <!-- 文档表格列表 -->
+          <div class="bg-white border border-slate-200/80 rounded-2xl overflow-hidden shadow-2xs">
+            <table class="w-full text-left border-collapse text-sm">
+              <thead class="bg-slate-50/80 border-b border-slate-200/80 text-slate-500 font-bold uppercase text-xs">
+                <tr>
+                  <th class="py-4 px-5">文档名称</th>
+                  <th class="py-4 px-5">格式</th>
+                  <th class="py-4 px-5">大小</th>
+                  <th class="py-4 px-5">切片状态</th>
+                  <th class="py-4 px-5">切片数 (Chunks)</th>
+                  <th class="py-4 px-5 text-right">操作</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                <tr v-for="doc in currentKb.docs" :key="doc.id" class="hover:bg-slate-50/70 transition">
+                  <td class="py-4 px-5 font-semibold text-slate-800 flex items-center gap-3">
+                    <i data-lucide="file-text" class="w-4.5 h-4.5 text-slate-400"></i>
+                    {{ doc.name }}
+                  </td>
+                  <td class="py-4 px-5 uppercase font-mono text-xs font-semibold text-slate-500">{{ doc.type }}</td>
+                  <td class="py-4 px-5 text-xs text-slate-500">{{ doc.size }}</td>
+                  <td class="py-4 px-5">
+                    <span
+                      :class="{
+                        'bg-emerald-50 text-emerald-700 border-emerald-200': doc.status === 'completed',
+                        'bg-amber-50 text-amber-700 border-amber-200': ['pending', 'parsing', 'chunking'].includes(doc.status),
+                        'bg-rose-50 text-rose-700 border-rose-200': doc.status === 'failed'
+                      }"
+                      class="px-2.5 py-1 rounded-md border font-semibold inline-flex items-center gap-1.5 text-xs">
+                      <span v-if="['pending', 'parsing', 'chunking'].includes(doc.status)" class="w-1.5 h-1.5 rounded-full bg-amber-500 animate-ping"></span>
+                      {{ doc.status === 'completed' ? '已入库/切片就绪' : (doc.status === 'failed' ? `处理失败：${doc.errorMessage || '请重试'}` : '解析与切片处理中...') }}
+                    </span>
+                  </td>
+                  <td class="py-4 px-5 font-mono font-bold text-slate-700">{{ doc.chunks }}</td>
+                  <td class="py-4 px-5 text-right">
+                    <button @click="deleteDoc(doc.id)" class="text-slate-400 hover:text-rose-600 transition font-medium p-1">
+                      删除
+                    </button>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ================= 弹窗组件群 ================= -->
+
+    <!-- 弹窗一：参考来源切片详情查看器 -->
+    <div v-if="showSourceModal && activeSource" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl max-w-2xl w-full p-7 shadow-2xl border border-slate-100 flex flex-col max-h-[85vh]">
+        <div class="flex justify-between items-start pb-5 border-b border-slate-100">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-teal-50 text-teal-600 flex items-center justify-center">
+              <i data-lucide="file-search" class="w-5 h-5"></i>
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-slate-900">检索溯源与切片原文</h3>
+              <p class="text-xs text-slate-400 mt-0.5">所属知识库: {{ activeSource.kbName }}</p>
+            </div>
+          </div>
+          <button @click="showSourceModal = false" class="text-slate-400 hover:text-slate-600 p-1.5">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+
+        <div class="py-5 space-y-4 overflow-y-auto flex-1">
+          <div class="flex flex-wrap gap-2.5 text-xs">
+            <span class="px-3 py-1.5 bg-slate-100 rounded-lg text-slate-700 font-semibold">文件: {{ activeSource.title }}</span>
+            <span class="px-3 py-1.5 bg-slate-100 rounded-lg text-slate-700 font-medium">{{ activeSource.chapter }}</span>
+            <span class="px-3 py-1.5 bg-slate-100 rounded-lg text-slate-700 font-mono font-medium">页码: P.{{ activeSource.page }}</span>
+            <span class="px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg font-mono font-bold">相似度匹配: {{ activeSource.score || '0.942' }}</span>
+          </div>
+
+          <div class="bg-slate-50 border border-slate-200 rounded-2xl p-5 text-sm leading-relaxed text-slate-700 space-y-2.5">
+            <div class="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+              <i data-lucide="quote" class="w-3.5 h-3.5"></i> 命中切片段落 (Chunk Text):
+            </div>
+            <p class="whitespace-pre-wrap font-sans text-slate-800 bg-white p-4 rounded-xl border border-slate-200/70 shadow-2xs leading-relaxed text-sm">
+              {{ activeSource.snippet || '第十三条【年休假享受资格与天数核定】：员工自入职并连续工龄满12个月以上者，依法享受带薪年休假。国家法定公休日、休息日不计入年休假的假期。其中：员工累计工作时间已满1年不满10年的，年休假为5天；已满10年不满20年的，年休假为10天；已满20年的，年休假为15天。休假需提前在OA系统发起申请，经部门主管批准后方可执行。' }}
+            </p>
+          </div>
+        </div>
+
+        <div class="pt-4 border-t border-slate-100 flex justify-end">
+          <button @click="showSourceModal = false" class="px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-sm text-white font-semibold transition">
+            我知道了
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗二：防误触二次确认对话框 (删除会话/知识库) -->
+    <div v-if="confirmDialog.show" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-100">
+        <div class="flex items-start gap-4">
+          <div class="w-11 h-11 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center shrink-0">
+            <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <h3 class="text-base font-bold text-slate-900">{{ confirmDialog.title }}</h3>
+            <p class="text-sm text-slate-500 mt-1.5 leading-relaxed">{{ confirmDialog.message }}</p>
+          </div>
+        </div>
+        <div class="mt-6 flex justify-end gap-3">
+          <button @click="confirmDialog.show = false" class="px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 font-medium transition">
+            取消
+          </button>
+          <button @click="executeConfirmAction" class="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-sm text-white font-semibold shadow-xs transition">
+            确认删除
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗三：新建知识库 -->
+    <div v-if="showAddKbModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl max-w-lg w-full p-7 shadow-2xl border border-slate-100">
+        <h3 class="text-lg font-bold text-slate-900 mb-5">新建知识库</h3>
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1.5">知识库名称</label>
+            <input v-model="newKbForm.name" placeholder="如：销售运营手册库" class="w-full text-sm border border-slate-200 rounded-xl p-3 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-50">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-600 mb-1.5">描述信息</label>
+            <textarea v-model="newKbForm.description" rows="3" placeholder="说明该知识库的定位与规约范畴..." class="w-full text-sm border border-slate-200 rounded-xl p-3 outline-none focus:border-teal-600 focus:ring-2 focus:ring-teal-50"></textarea>
+          </div>
+        </div>
+        <div class="mt-7 flex justify-end gap-3">
+          <button @click="showAddKbModal = false" class="px-4 py-2 rounded-xl border border-slate-200 text-sm text-slate-600 hover:bg-slate-50 font-medium">取消</button>
+          <button @click="createKnowledgeBase" class="px-5 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-sm text-white font-bold shadow-xs">确认创建</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗四：Agent 决策轨迹日志 -->
+    <div v-if="showTraceModal" class="fixed inset-0 bg-slate-900/40 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+      <div class="bg-white rounded-3xl max-w-xl w-full p-7 shadow-2xl border border-slate-100">
+        <div class="flex justify-between items-center mb-5">
+          <h3 class="text-base font-bold text-slate-900 flex items-center gap-2">
+            <i data-lucide="activity" class="w-5 h-5 text-teal-600"></i> Agent 决策调用追踪日志
+          </h3>
+          <button @click="showTraceModal = false" class="text-slate-400 hover:text-slate-600">
+            <i data-lucide="x" class="w-5 h-5"></i>
+          </button>
+        </div>
+        <div class="space-y-3 text-xs text-slate-600 font-mono">
+          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="font-bold text-slate-800 mb-1">Step 1: 意图理解与知识库自动路由</div>
+            <p class="text-slate-500 leading-relaxed">Agent 分析输入意图，无需人工指定，自主锁定最契合知识库集合并重写 Query。</p>
+          </div>
+          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="font-bold text-slate-800 mb-1">Step 2: 多路混合检索 (Dense + BM25)</div>
+            <p class="text-slate-500 leading-relaxed">向目标向量空间检索 Top-K 文本块并结合关键词打分。</p>
+          </div>
+          <div class="p-3.5 rounded-xl bg-slate-50 border border-slate-200">
+            <div class="font-bold text-slate-800 mb-1">Step 3: 重排序与证据溯源注入</div>
+            <p class="text-slate-500 leading-relaxed">执行 Cross-Encoder Rerank 过滤噪声，将高置信度切片送入生成上下文。</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/api.js"></script>
+  <script>
+    const { createApp, ref, computed, nextTick, onMounted, onUpdated } = Vue;
+
+    createApp({
+      setup() {
+        const currentTab = ref('chat'); // 默认进入智能问答
+        const showTraceModal = ref(false);
+        const showAddKbModal = ref(false);
+        const showSourceModal = ref(false);
+        const activeSource = ref(null);
+        const toastMessage = ref('');
+        const backendReady = ref(false);
+        const userInput = ref('');
+        const selectedImage = ref(null);
+        const activeSessionId = ref(1);
+        const activeKbId = ref(null);
+
+        const newKbForm = ref({ name: '', description: '' });
+
+        // 二次确认弹窗状态
+        const confirmDialog = ref({
+          show: false,
+          title: '',
+          message: '',
+          action: null
+        });
+
+        const triggerToast = (msg) => {
+          toastMessage.value = msg;
+          setTimeout(() => { toastMessage.value = ''; }, 3200);
+        };
+
+        // 知识库数据由后端持久化 API 提供
+        const knowledgeBases = ref([]);
+
+        const normalizeKnowledgeBase = (kb) => ({
+          id: kb.id,
+          name: kb.name,
+          description: kb.description || '暂无描述',
+          totalChunks: kb.total_chunks,
+          suggestedQuestions: [],
+          docs: kb.documents.map(doc => ({
+            id: doc.id,
+            name: doc.name,
+            type: doc.name.split('.').pop()?.toLowerCase() || 'pdf',
+            size: '—',
+            status: doc.status,
+            chunks: doc.chunks,
+            errorMessage: doc.error_message
+          }))
+        });
+
+        const refreshKnowledgeBases = async () => {
+          const items = await AgentRagApi.listKnowledgeBases();
+          knowledgeBases.value = items.map(normalizeKnowledgeBase);
+          if (!knowledgeBases.value.some(kb => kb.id === activeKbId.value)) {
+            activeKbId.value = knowledgeBases.value[0]?.id || null;
+          }
+        };
+
+        const checkHealth = async () => {
+          try {
+            await AgentRagApi.health();
+            backendReady.value = true;
+          } catch (error) {
+            backendReady.value = false;
+          }
+        };
+
+        // 会话历史数据
+        const sessions = ref([
+          {
+            id: 1,
+            title: '工作满十年的员工年假有几天？',
+            time: '刚刚',
+            messages: [
+              {
+                role: 'user',
+                content: '工作满十年的员工年假有几天？',
+                image: null
+              },
+              {
+                role: 'agent',
+                content: '根据《员工考勤与休假管理制度》第五章第十三条规定：员工累计工作满10年不满20年的，年休假为 10 天。',
+                expandThought: false,
+                thoughts: [
+                  '1. [Router] 自主理解语义：识别问题属于“员工休假制度”',
+                  '2. [Search] 自动路由检索知识库《人力行政管理制度》，命中 3 个切片',
+                  '3. [Rerank] 置信度最高的切片来自第五章，提取核心要素完成回复'
+                ],
+                sources: [
+                  {
+                    kbName: '人力行政管理制度',
+                    title: '员工考勤与休假管理制度.docx',
+                    chapter: '第五章 休假管理',
+                    page: 12,
+                    score: '0.962',
+                    snippet: '第五章 休假管理细则\n第十三条【年休假享受资格与核定】：员工累计工作满1年不满10年的，年休假为5天；已满10年不满20年的，年休假为10天；已满20年的，年休假为15天。国家法定休假日、休息日不计入年休假的假期。'
+                  }
+                ]
+              }
+            ]
+          }
+        ]);
+
+        // 动态汇总所有知识库推荐提问
+        const allDynamicQuestions = computed(() => {
+          const list = [];
+          knowledgeBases.value.forEach(kb => {
+            if (kb.suggestedQuestions) {
+              list.push(...kb.suggestedQuestions);
+            }
+          });
+          return list.slice(0, 6);
+        });
+
+        const currentSession = computed(() => {
+          return sessions.value.find(s => s.id === activeSessionId.value) || sessions.value[0] || { title: '无会话', messages: [] };
+        });
+
+        const currentKb = computed(() => {
+          return knowledgeBases.value.find(k => k.id === activeKbId.value) || knowledgeBases.value[0] || { id: null, name: '暂无知识库', description: '请先创建知识库', totalChunks: 0, docs: [], suggestedQuestions: [] };
+        });
+
+        const renderIcons = () => {
+          nextTick(() => {
+            if (window.lucide) {
+              window.lucide.createIcons();
+            }
+          });
+        };
+
+        onMounted(async () => {
+          renderIcons();
+          await checkHealth();
+          try {
+            await refreshKnowledgeBases();
+          } catch (error) {
+            triggerToast(error.message);
+          }
+        });
+        onUpdated(renderIcons);
+
+        const createNewSession = () => {
+          const newId = Date.now();
+          sessions.value.unshift({
+            id: newId,
+            title: '新对话',
+            time: '刚刚',
+            messages: []
+          });
+          activeSessionId.value = newId;
+        };
+
+        const openSourceDetail = (source) => {
+          activeSource.value = source;
+          showSourceModal.value = true;
+        };
+
+        const confirmDeleteSession = (session) => {
+          confirmDialog.value = {
+            show: true,
+            title: '删除对话记录',
+            message: `确认删除对话 “${session.title}” 吗？删除后该历史记录将无法找回。`,
+            action: () => {
+              sessions.value = sessions.value.filter(s => s.id !== session.id);
+              if (sessions.value.length === 0) {
+                createNewSession();
+              } else if (activeSessionId.value === session.id) {
+                activeSessionId.value = sessions.value[0].id;
+              }
+              triggerToast('对话已成功删除');
+            }
+          };
+        };
+
+        const confirmDeleteKb = (kb) => {
+          if (!kb?.id) return;
+          confirmDialog.value = {
+            show: true,
+            title: '删除知识库',
+            message: `确认删除知识库 “${kb.name}” 吗？库内的全部文档及切片数据将被永久清除。`,
+            action: async () => {
+              try {
+                await AgentRagApi.deleteKnowledgeBase(kb.id);
+                await refreshKnowledgeBases();
+                triggerToast(`知识库《${kb.name}》已成功删除`);
+              } catch (error) {
+                triggerToast(error.message);
+              }
+            }
+          };
+        };
+
+        const executeConfirmAction = () => {
+          if (confirmDialog.value.action) {
+            confirmDialog.value.action();
+          }
+          confirmDialog.value.show = false;
+        };
+
+        const handleImageUpload = (e) => {
+          e.target.value = '';
+          selectedImage.value = null;
+          triggerToast('图片问答将在多模态阶段接入，当前暂不支持');
+        };
+
+        const sendMessage = () => {
+          if (!userInput.value.trim() && !selectedImage.value) return;
+          if (!knowledgeBases.value.length) {
+            triggerToast('知识库为空，请先创建知识库并上传 PDF');
+            return;
+          }
+
+          const queryText = userInput.value;
+          const queryImg = selectedImage.value;
+
+          currentSession.value.messages.push({
+            role: 'user',
+            content: queryText,
+            image: queryImg
+          });
+
+          if (currentSession.value.title === '新对话') {
+            currentSession.value.title = queryText ? queryText.slice(0, 16) : '图片咨询';
+          }
+
+          userInput.value = '';
+          selectedImage.value = null;
+
+          setTimeout(() => {
+            const isTech = /微服务|代码|架构|接口|rpc|鉴权|服务/i.test(queryText);
+            const targetKb = isTech ? (knowledgeBases.value.find(k => k.id === 2) || knowledgeBases.value[0]) : knowledgeBases.value[0];
+            const matchedDoc = targetKb?.docs[0]?.name || '规范指引文件';
+
+            currentSession.value.messages.push({
+              role: 'agent',
+              content: `【Agent 自主检索生成】已在《${targetKb.name}》中检索到高相关规约：针对您咨询的问题，系统已核验相关的最新章节，相关准则均已落地执行。您可以点击下方来源标签查看具体的原文切片。`,
+              expandThought: false,
+              thoughts: [
+                `1. [Agent Intent Router] 自主分析语义 -> 路由至《${targetKb.name}》`,
+                `2. [Hybrid Retrieval] 召回最相似切片 Top-3`,
+                `3. [Rerank] 置信度得分 0.958，提取关键佐证生成权威回复`
+              ],
+              sources: [
+                {
+                  kbName: targetKb.name,
+                  title: matchedDoc,
+                  chapter: '核心实施细则',
+                  page: Math.floor(Math.random() * 20) + 1,
+                  score: '0.958',
+                  snippet: `【切片原文摘录】关于本项规程的执行细则：\n所有适用对象均应严格遵循既定准则。如遇跨组协作与特殊事项，应在对应系统中按预设模版提请报备，并由部门负责人于2个工作日内完成审批。`
+                }
+              ]
+            });
+          }, 700);
+        };
+
+        const waitForDocument = async (documentId, maxAttempts = 150) => {
+          for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+            const document = await AgentRagApi.getDocument(documentId);
+            if (['completed', 'failed'].includes(document.status)) return document;
+            await new Promise(resolve => setTimeout(resolve, 800));
+          }
+          throw new Error('文档处理超时，请稍后刷新查看状态');
+        };
+
+        const handleDocUpload = async (e) => {
+          const files = Array.from(e.target.files || []);
+          const targetKbId = activeKbId.value;
+          e.target.value = '';
+          if (!targetKbId) {
+            triggerToast('请先创建并选择知识库');
+            return;
+          }
+
+          for (const file of files) {
+            try {
+              const document = await AgentRagApi.uploadDocument(targetKbId, file);
+              await refreshKnowledgeBases();
+              const result = await waitForDocument(document.id);
+              await refreshKnowledgeBases();
+              triggerToast(
+                result.status === 'completed'
+                  ? `文档《${file.name}》已完成解析，共 ${result.chunk_count} 个切片`
+                  : `文档《${file.name}》处理失败：${result.error_message}`
+              );
+            } catch (error) {
+              triggerToast(error.message);
+            }
+          }
+        };
+
+        const deleteDoc = async (id) => {
+          try {
+            await AgentRagApi.deleteDocument(id);
+            await refreshKnowledgeBases();
+            triggerToast('文档及切片已移除');
+          } catch (error) {
+            triggerToast(error.message);
+          }
+        };
+
+        const createKnowledgeBase = async () => {
+          if (!newKbForm.value.name.trim()) return;
+          try {
+            const newKb = await AgentRagApi.createKnowledgeBase({
+              name: newKbForm.value.name,
+              description: newKbForm.value.description || null
+            });
+            await refreshKnowledgeBases();
+            activeKbId.value = newKb.id;
+            showAddKbModal.value = false;
+            newKbForm.value = { name: '', description: '' };
+            triggerToast(`知识库《${newKb.name}》创建成功！`);
+          } catch (error) {
+            triggerToast(error.message);
+          }
+        };
+
+        return {
+          currentTab,
+          showTraceModal,
+          showAddKbModal,
+          showSourceModal,
+          activeSource,
+          confirmDialog,
+          toastMessage,
+          backendReady,
+          userInput,
+          selectedImage,
+          activeSessionId,
+          activeKbId,
+          newKbForm,
+          sessions,
+          knowledgeBases,
+          allDynamicQuestions,
+          currentSession,
+          currentKb,
+          createNewSession,
+          openSourceDetail,
+          confirmDeleteSession,
+          confirmDeleteKb,
+          executeConfirmAction,
+          handleImageUpload,
+          sendMessage,
+          handleDocUpload,
+          deleteDoc,
+          createKnowledgeBase
+        };
+      }
+    }).mount('#app');
+  </script>
+</body>
+</html>
